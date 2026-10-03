@@ -1,8 +1,8 @@
 """Runs inside Pyodide (loaded by worker.js after steps.py). Safely parses the user's input and
 integrates or differentiates it.
 
-worker.js calls run(expr, lower, upper, mode, want_steps) and sample_view(lo, hi); both return
-JSON strings. integral_steps_for(), derivative_steps(), add(), NoSteps, tex() and integrand_tex() come
+worker.js calls run(expr, lower, upper, mode, want_steps), sample_view(lo, hi) and point_at(x);
+all return JSON strings. integral_steps_for(), derivative_steps(), add(), NoSteps, tex() and integrand_tex() come
 from steps.py; tex() writes ln and arcsin/arctan the way a math class does.
 """
 import json
@@ -38,8 +38,12 @@ AREA_POINTS = 300
 MAX_VIEW_WIDTH = 1e7
 
 # The last function (and its derivative, in derivative mode), so the graph can ask for fresh
-# points as you pan and zoom.
-VIEW = {"fn": None, "fn2": None, "a": None, "b": None}
+# points as you pan and zoom. dfn/dfn2 are their derivatives, to find maxima and minima.
+VIEW = {"fn": None, "dfn": None, "fn2": None, "dfn2": None, "a": None, "b": None}
+EMPTY_VIEW = dict(VIEW)
+# Important points (intercepts, max/min, intersections): more than this many of one kind in
+# view means the curve wiggles too fast for them to be useful, so that kind is skipped.
+MAX_POINTS_PER_KIND = 40
 # lambdify's "math" module has no sign(), which |x|' needs.
 LAMBDIFY_MODULES = [{"sign": lambda v: (v > 0) - (v < 0)}, "math"]
 
@@ -91,29 +95,32 @@ def parse_limit(text):
     return value
 
 
+def safe_value(fn, xv):
+    """fn(xv) as a float, or None where it's undefined (log(-1), 1/0, complex values...)."""
+    try:
+        yv = float(fn(xv))
+    except Exception:
+        return None
+    return yv if math.isfinite(yv) else None
+
+
 def sample(fn, lo, hi, count):
     """count evenly spaced [x, y] pairs; y is None where f is undefined (Chart.js leaves a gap)."""
-    points = []
-    for i in range(count + 1):
-        xv = lo + (hi - lo) * i / count
-        try:
-            yv = float(fn(xv))
-        except Exception:  # log(-1), 1/0, complex values...
-            yv = None
-        if yv is not None and not math.isfinite(yv):
-            yv = None
-        points.append([xv, yv])
-    return points
+    return [[xv, safe_value(fn, xv)] for xv in (lo + (hi - lo) * i / count for i in range(count + 1))]
 
 
 def remember(f, a, b, variable=x, derivative=None):
     """Store f (and f') for sample_view(). Returns the plot info for the page, or None if f can't be plotted."""
     try:
         fn = lambdify(variable, f, LAMBDIFY_MODULES)
-        fn2 = None if derivative is None else lambdify(variable, derivative, LAMBDIFY_MODULES)
+        dfn = lambdify(variable, diff(f, variable), LAMBDIFY_MODULES)
+        fn2 = dfn2 = None
+        if derivative is not None:
+            fn2 = lambdify(variable, derivative, LAMBDIFY_MODULES)
+            dfn2 = lambdify(variable, diff(derivative, variable), LAMBDIFY_MODULES)
     except Exception:
         return None
-    VIEW.update(fn=fn, fn2=fn2, a=a, b=b)
+    VIEW.update(fn=fn, dfn=dfn, fn2=fn2, dfn2=dfn2, a=a, b=b)
     return {"a": a, "b": b, "derivative": derivative is not None}
 
 
@@ -201,8 +208,28 @@ def add_integral_steps(result, f, answer, limits=None):
     result["steps"] = steps
 
 
-def solve_derivative(expr_text, want_steps):
+def average_rate(f, lower_text, upper_text):
+    """(a, b, f(a), f(b), rate) for the average rate of change (f(b) − f(a)) / (b − a)."""
+    a, b = parse_limit(lower_text), parse_limit(upper_text)
+    if a == b:
+        raise UserError("From and To must be different.")
+    fa, fb = f.subs(x_real, a), f.subs(x_real, b)
+    for value in (fa, fb):
+        try:
+            number = complex(value.evalf())
+        except Exception:
+            raise UserError("f isn't defined at From or To.")
+        if not (math.isfinite(number.real) and abs(number.imag) <= 1e-12 * max(1, abs(number.real))):
+            raise UserError("f isn't defined at From or To.")
+    return a, b, fa, fb, (fb - fa) / (b - a)
+
+
+def solve_derivative(expr_text, lower_text, upper_text, want_steps):
     f = parse(expr_text, allow_x=True, error="Couldn't read that expression.", variable=x_real)
+    has_lower, has_upper = bool(lower_text.strip()), bool(upper_text.strip())
+    if has_lower != has_upper:
+        raise UserError("Fill in both limits.")
+    rate = average_rate(f, lower_text, upper_text) if has_lower else None
     answer = diff(f, x_real)
     result = {
         "inputLatex": rf"\frac{{d}}{{dx}}\left[{tex(f)}\right]",
@@ -210,6 +237,16 @@ def solve_derivative(expr_text, want_steps):
         "notes": special_notes(answer),
         "plot": remember(f, None, None, variable=x_real, derivative=answer),
     }
+    rate_step = None
+    if rate:
+        a, b, fa, fb, value = rate
+        result["rate"] = {"latex": tex(value), "decimal": float(value.evalf()), "from": tex(a), "to": tex(b)}
+        if result["plot"]:  # start the graph around [a, b] and draw the secant line
+            result["plot"].update(a=min(float(a), float(b)), b=max(float(a), float(b)),
+                                  secant=[[float(a), float(fa.evalf())], [float(b), float(fb.evalf())]])
+        rate_step = ("Average rate of change from a to b: (f(b) − f(a)) / (b − a), the slope of the secant line.",
+                     rf"\frac{{f\left({tex(b)}\right) - f\left({tex(a)}\right)}}{{{tex(b)} - {tex(a)}}} = "
+                     rf"\frac{{{tex(fb)} - \left({tex(fa)}\right)}}{{{tex(b)} - {tex(a)}}} = {tex(value)}")
     if not want_steps:
         return result
     try:
@@ -219,6 +256,8 @@ def solve_derivative(expr_text, want_steps):
             raise NoSteps
         if tex(ours) != tex(answer):
             add(steps, 0, "Simplify.", rf"\frac{{d}}{{dx}}\left[{tex(f)}\right] = {tex(answer)}")
+        if rate_step:
+            add(steps, 0, *rate_step)
     except NoSteps:
         result["notes"].append("Couldn't break this one into steps; the answer above is from SymPy.")
         return result
@@ -229,9 +268,9 @@ def solve_derivative(expr_text, want_steps):
 
 
 def solve(expr_text, lower_text, upper_text, mode, want_steps):
-    VIEW.update(fn=None, fn2=None, a=None, b=None)
+    VIEW.update(EMPTY_VIEW)
     if mode == "differentiate":
-        return solve_derivative(expr_text, want_steps)
+        return solve_derivative(expr_text, lower_text, upper_text, want_steps)
     f = parse(expr_text, allow_x=True, error="Couldn't read that expression.")
 
     if not lower_text.strip() and not upper_text.strip():
@@ -278,18 +317,105 @@ def solve(expr_text, lower_text, upper_text, mode, want_steps):
     return result
 
 
+def bisect(g, lo, hi, g_lo):
+    """Narrow [lo, hi], where g changes sign, down to the crossing (60 halvings: full precision)."""
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        g_mid = safe_value(g, mid)
+        if g_mid is None:
+            return None
+        if g_mid == 0:
+            return mid
+        if (g_mid < 0) == (g_lo < 0):
+            lo, g_lo = mid, g_mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def crossings(g, xs, gs):
+    """(x, direction) where g crosses zero between the sample points xs (gs = g at xs).
+    direction is +1 going up, -1 going down. Touching zero without crossing doesn't count."""
+    found = []
+    for i in range(len(xs) - 1):
+        g0, g1 = gs[i], gs[i + 1]
+        if g0 is None or g1 is None or g1 == 0:  # a sample exactly at 0 is handled as g0 next time
+            continue
+        if g0 == 0:
+            before = gs[i - 1] if i > 0 else None
+            if before is None or before == 0 or (before < 0) == (g1 < 0):
+                continue
+            found.append((xs[i], 1 if g1 > 0 else -1))
+        elif (g0 < 0) != (g1 < 0):
+            root = bisect(g, xs[i], xs[i + 1], g0)
+            g_root = None if root is None else safe_value(g, root)
+            # A jump across an asymptote also changes sign (1/x at 0): only keep real zeros.
+            if g_root is None or abs(g_root) > 1e-6 * max(1.0, abs(g0), abs(g1)):
+                continue
+            found.append((root, 1 if g1 > 0 else -1))
+        if len(found) > MAX_POINTS_PER_KIND:
+            return []
+    return found
+
+
+def curve_points(fn, dfn, samples, curve):
+    """Important points of one curve in the sampled range: max/min, x-intercepts, y-intercept."""
+    xs = [p[0] for p in samples]
+    points = []
+    for xv, direction in crossings(dfn, xs, [safe_value(dfn, v) for v in xs]):
+        yv = safe_value(fn, xv)
+        if yv is not None:  # f' goes - to + at a min, + to - at a max
+            points.append({"curve": curve, "kind": "min" if direction > 0 else "max", "x": xv, "y": yv})
+    for xv, _ in crossings(fn, xs, [p[1] for p in samples]):
+        points.append({"curve": curve, "kind": "x-intercept", "x": xv, "y": 0.0})
+    y0 = safe_value(fn, 0.0)
+    if xs[0] <= 0 <= xs[-1] and y0 is not None:
+        points.append({"curve": curve, "kind": "y-intercept", "x": 0.0, "y": y0})
+    # One point per spot: a max/min beats an intercept beats the y-intercept (x² at 0 is "min").
+    step = xs[1] - xs[0]
+    kept = []
+    for p in points:
+        if all(abs(p["x"] - k["x"]) > step / 2 for k in kept):
+            kept.append(p)
+    return kept
+
+
+def intersections(fn, fn2, samples, samples2):
+    """Where f and f' cross (derivative tab, when both curves are shown)."""
+    xs = [p[0] for p in samples]
+    gaps = [None if (p[1] is None or q[1] is None) else p[1] - q[1] for p, q in zip(samples, samples2)]
+    found = crossings(lambda v: fn(v) - fn2(v), xs, gaps)
+    return [{"curve": "both", "kind": "intersection", "x": xv, "y": safe_value(fn, xv)}
+            for xv, _ in found if safe_value(fn, xv) is not None]
+
+
 def sample_view(lo, hi):
     """Points for the graph between lo and hi: the curve, the shaded part of [a, b] in view,
-    and f' (curve2) in derivative mode."""
+    f' (curve2) in derivative mode, and the important points of each curve."""
     lo, hi = float(lo), float(hi)
     fn, fn2, a, b = VIEW["fn"], VIEW["fn2"], VIEW["a"], VIEW["b"]
     if fn is None or not (math.isfinite(lo) and math.isfinite(hi) and 0 < hi - lo <= MAX_VIEW_WIDTH):
-        return json.dumps({"curve": [], "area": [], "curve2": []})
+        return json.dumps({"curve": [], "area": [], "curve2": [], "points": []})
     area = []
     if a is not None and max(lo, a) < min(hi, b):
         area = sample(fn, max(lo, a), min(hi, b), AREA_POINTS)
-    curve2 = [] if fn2 is None else sample(fn2, lo, hi, CURVE_POINTS)
-    return json.dumps({"curve": sample(fn, lo, hi, CURVE_POINTS), "area": area, "curve2": curve2})
+    curve = sample(fn, lo, hi, CURVE_POINTS)
+    points = curve_points(fn, VIEW["dfn"], curve, "f")
+    curve2 = []
+    if fn2 is not None:
+        curve2 = sample(fn2, lo, hi, CURVE_POINTS)
+        points += curve_points(fn2, VIEW["dfn2"], curve2, "df") + intersections(fn, fn2, curve, curve2)
+    return json.dumps({"curve": curve, "area": area, "curve2": curve2, "points": points})
+
+
+def point_at(xv):
+    """Exact f(x) and f'(x) (None where undefined) for the graph's click-to-read point."""
+    xv = float(xv)
+
+    def value(fn):
+        return None if fn is None or not math.isfinite(xv) else safe_value(fn, xv)
+
+    return json.dumps({"y": value(VIEW["fn"]), "y2": value(VIEW["fn2"])})
 
 
 def run(expr_text, lower_text, upper_text, mode="integrate", want_steps=True):

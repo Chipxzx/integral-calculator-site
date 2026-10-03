@@ -8,11 +8,15 @@ const ready = (async () => {
   await pyodide.loadPackage("sympy");
   // steps.py first: integrate.py uses its functions. Two literal fetch() calls so deploy.sh
   // can tag each URL for cache-busting.
-  for (const response of [await fetch("steps.py?v=15278e2"), await fetch("integrate.py?v=15278e2")]) {
+  for (const response of [await fetch("steps.py?v=e5da208"), await fetch("integrate.py?v=e5da208")]) {
     if (!response.ok) throw new Error(`Couldn't fetch ${response.url} (${response.status})`);
     pyodide.runPython(await response.text());
   }
-  return { run: pyodide.globals.get("run"), sampleView: pyodide.globals.get("sample_view") };
+  return {
+    run: pyodide.globals.get("run"),
+    sampleView: pyodide.globals.get("sample_view"),
+    pointAt: pyodide.globals.get("point_at"),
+  };
 })();
 
 ready.then(
@@ -21,7 +25,18 @@ ready.then(
 );
 
 onmessage = async ({ data }) => {
-  const { run, sampleView } = await ready;
+  const { run, sampleView, pointAt } = await ready;
+  if (data.type === "point") {
+    let values;
+    try {
+      values = JSON.parse(pointAt(data.x));
+    } catch (err) {
+      console.error(err);
+      values = { y: null, y2: null };
+    }
+    postMessage({ type: "point", id: data.id, x: data.x, ...values });
+    return;
+  }
   if (data.type === "sample") {
     let points;
     try {

@@ -10,6 +10,7 @@
   --accent: #00e5ff;
   --accent-fill: rgba(0, 229, 255, 0.15);
   --accent-2: #ff4fd8; /* f'(x) on the derivative tab */
+  --accent-3: #ffc857; /* the secant line (average rate of change) */
   --error: #ff4d6d;
   --glow: 0 0 12px rgba(0, 229, 255, 0.45);
   --mono: ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -360,6 +361,28 @@ button:disabled { opacity: 0.35; cursor: default; }
   color: var(--text-dim);
 }
 
+.legend label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px; /* bigger tap target on phones */
+  font-size: 0.75rem;
+  letter-spacing: normal;
+  text-transform: none; /* the form's labels are uppercase; f(x) must stay f(x) */
+  cursor: pointer;
+}
+
+.legend input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.legend-df input { accent-color: var(--accent-2); }
+.legend-secant input { accent-color: var(--accent-3); }
+
 /* a short colored line before each name */
 .legend span::before {
   content: "";
@@ -372,6 +395,26 @@ button:disabled { opacity: 0.35; cursor: default; }
 
 .legend-f::before { background: var(--accent); box-shadow: var(--glow); }
 .legend-df::before { background: var(--accent-2); box-shadow: 0 0 10px var(--accent-2); }
+
+.legend-secant {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+}
+
+/* dashed amber line, like the secant on the graph */
+.legend-secant::before {
+  background: repeating-linear-gradient(90deg, var(--accent-3) 0 6px, transparent 6px 10px);
+}
+
+.rate {
+  margin-top: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  color: var(--accent-3);
+}
+
+.rate .katex-display { margin: 0; }
 
 .plot-canvas {
   position: relative;

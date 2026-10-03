@@ -6,13 +6,13 @@
   <title>Calculus Calculator</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"
         integrity="sha384-3rdsX6e5mueWyoweR9NIVmtEsUkokpBT/0ALqKKIBMr9j4qhHkaIkAcGgsE6uVlp" crossorigin="anonymous">
-  <link rel="stylesheet" href="style.css?v=15278e2">
+  <link rel="stylesheet" href="style.css?v=e5da208">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js"
           integrity="sha384-QFFtAGzvvj+bfgCGxXJlNZZR1nXEZgvG8tDLCCY1F19xl20WlfTYgguB4VcNdxYk" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
           integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
-  <script defer src="graph.js?v=15278e2"></script>
-  <script defer src="app.js?v=15278e2"></script>
+  <script defer src="graph.js?v=e5da208"></script>
+  <script defer src="app.js?v=e5da208"></script>
 </head>
 <body>
   <main>
@@ -29,7 +29,7 @@
         <input id="expr" type="text" placeholder="x^2*sin(x)" maxlength="200"
                spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
       </label>
-      <div class="limits" data-only="integrate">
+      <div class="limits">
         <label>From
           <input id="lower" type="text" placeholder="0" maxlength="200"
                  spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
@@ -55,7 +55,7 @@
         <button type="button" class="key" data-insert="ln(">ln</button>
       </div>
       <p class="hint" data-only="integrate">Leave the limits empty for an antiderivative. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
-      <p class="hint" data-only="differentiate" hidden>Differentiates with respect to x. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
+      <p class="hint" data-only="differentiate" hidden>Differentiates with respect to x. Fill in From and To for the average rate of change between them. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
       <div id="examples" class="examples">
         <span class="examples-label">Try:</span>
         <button type="button" class="chip" data-only="integrate" data-expr="x*exp(x)" disabled>x·eˣ</button>
@@ -87,6 +87,7 @@
       <div id="formula" class="formula"></div>
       <p id="decimal" class="decimal"></p>
       <ul id="notes" class="notes" hidden></ul>
+      <div id="rate" class="rate" hidden></div>
       <p id="check" class="check" hidden></p>
       <!-- Native <details>: folds and unfolds without JavaScript -->
       <details id="steps" class="steps" open hidden>
@@ -98,11 +99,13 @@
           <canvas id="canvas" aria-label="Graph of f(x)" role="img"></canvas>
           <button id="reset" class="small reset" type="button">Reset</button>
         </div>
+        <!-- Derivative tab: tick what to draw. Default: f′(x) on; f(x) and the secant off. -->
         <p id="legend" class="legend" hidden>
-          <span class="legend-f">f(x)</span>
-          <span class="legend-df">f′(x)</span>
+          <label class="legend-f"><input type="checkbox" id="show-f"><span>f(x)</span></label>
+          <label class="legend-df"><input type="checkbox" id="show-df" checked><span>f′(x)</span></label>
+          <label id="legend-secant" class="legend-secant" hidden><input type="checkbox" id="show-secant"><span>secant</span></label>
         </p>
-        <p class="plot-hint">Drag to move · scroll or pinch to zoom · double-click to reset</p>
+        <p class="plot-hint">Click a curve or one of its dots (max, min, intercepts) to read the point, then drag it along the curve · drag elsewhere to move · scroll or pinch to zoom · double-click to reset</p>
       </div>
     </section>
   </main>

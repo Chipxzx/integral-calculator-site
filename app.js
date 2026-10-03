@@ -31,6 +31,7 @@ const notesEl = $("notes");
 const checkEl = $("check");
 const copyButton = $("copy");
 const stepsEl = $("steps");
+const rateEl = $("rate");
 const stepsList = $("steps-list");
 const tabs = document.querySelectorAll(".tab");
 const modeOnly = document.querySelectorAll("[data-only]"); // shown only on one tab
@@ -57,7 +58,7 @@ function isAllowed(text, allowX) {
 
 function validate(expr, lower, upper) {
   if (!isAllowed(expr, true)) return "Couldn't read that expression.";
-  if (mode === "differentiate" || (!lower && !upper)) return null;
+  if (!lower && !upper) return null;
   if (!lower || !upper) return "Fill in both limits.";
   if (!isAllowed(lower, false) || !isAllowed(upper, false)) return "Couldn't read the limits.";
   return null;
@@ -78,6 +79,7 @@ function clearOutput() {
   errorEl.hidden = true;
   resultEl.hidden = true;
   stepsEl.hidden = true;
+  rateEl.hidden = true;
   clearGraph();
 }
 
@@ -113,6 +115,14 @@ function requestSamples(lo, hi) {
   return id;
 }
 
+// graph.js calls this when you click/tap the graph; returns the request id (or null).
+function requestPoint(x) {
+  if (!Number.isFinite(x)) return null;
+  const id = ++nextId;
+  worker.postMessage({ type: "point", id, x });
+  return id;
+}
+
 function showResult(data) {
   if (!data.ok) return showError(data.error);
   const hasExact = data.resultLatex !== undefined;
@@ -135,10 +145,19 @@ function showResult(data) {
     checkEl.dataset.status = data.check.status;
   }
 
+  // Derivative tab with From/To: the average rate of change (exact, plus a decimal if it isn't whole).
+  rateEl.hidden = !data.rate;
+  if (data.rate) {
+    const { latex, decimal, from, to } = data.rate;
+    const approx = /^-?\d+$/.test(latex) ? "" : ` \\approx ${formatDecimal(decimal)}`;
+    katex.render(`\\text{Average rate of change on } \\left[${from}, ${to}\\right] = ${latex}${approx}`, rateEl,
+      { displayMode: true, throwOnError: false });
+  }
+
   renderSteps(data.steps);
   copyButton.textContent = "Copy LaTeX";
   resultEl.hidden = false;
-  if (data.plot) showGraph(data.plot, requestSamples);
+  if (data.plot) showGraph(data.plot, requestSamples, requestPoint);
 
   // On phones: close the keyboard and bring the answer into view.
   if (touchScreen.matches) {
@@ -148,7 +167,7 @@ function showResult(data) {
 }
 
 function startWorker() {
-  worker = new Worker("worker.js?v=15278e2", { type: "module" });
+  worker = new Worker("worker.js?v=e5da208", { type: "module" });
   setBusy(true, "Loading math engine…");
   // Fires if worker.js itself fails to load (e.g. the CDN is unreachable).
   worker.onerror = () => setBusy(true, "Couldn't load the math engine. Check your connection and reload the page.");
@@ -168,6 +187,8 @@ function startWorker() {
       showResult(data);
     } else if (data.type === "samples") {
       applySamples(data);
+    } else if (data.type === "point") {
+      applyPoint(data);
     }
   };
 }
@@ -178,9 +199,8 @@ form.addEventListener("submit", (event) => {
   clearOutput();
 
   const expr = exprInput.value.trim();
-  const integral = mode === "integrate";
-  const lower = integral ? lowerInput.value.trim() : "";
-  const upper = integral ? upperInput.value.trim() : "";
+  const lower = lowerInput.value.trim(); // definite integral, or average rate of change
+  const upper = upperInput.value.trim();
   const problem = validate(expr, lower, upper);
   if (problem) return showError(problem);
 
