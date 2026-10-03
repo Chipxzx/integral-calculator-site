@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integral Calculator</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"
+        integrity="sha384-3rdsX6e5mueWyoweR9NIVmtEsUkokpBT/0ALqKKIBMr9j4qhHkaIkAcGgsE6uVlp" crossorigin="anonymous">
+  <link rel="stylesheet" href="style.css?v=8ea9d69">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js"
+          integrity="sha384-QFFtAGzvvj+bfgCGxXJlNZZR1nXEZgvG8tDLCCY1F19xl20WlfTYgguB4VcNdxYk" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
+          integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+  <script defer src="graph.js?v=8ea9d69"></script>
+  <script defer src="app.js?v=8ea9d69"></script>
+</head>
+<body>
+  <main>
+    <h1><span class="logo" aria-hidden="true">∫</span> Integral Calculator</h1>
+
+    <form id="form" autocomplete="off">
+      <label>f(x)
+        <input id="expr" type="text" placeholder="x^2*sin(x)" maxlength="200"
+               spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
+      </label>
+      <div class="limits">
+        <label>From
+          <input id="lower" type="text" placeholder="0" maxlength="200"
+                 spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
+        </label>
+        <label>To
+          <input id="upper" type="text" placeholder="pi" maxlength="200"
+                 spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
+        </label>
+      </div>
+      <!-- Shown on touch screens only (style.css): symbols that are hard to reach on phone keyboards -->
+      <div id="keypad" class="keypad" aria-label="Math keys">
+        <button type="button" class="key" data-insert="x">x</button>
+        <button type="button" class="key" data-insert="^">^</button>
+        <button type="button" class="key" data-insert="(">(</button>
+        <button type="button" class="key" data-insert=")">)</button>
+        <button type="button" class="key" data-insert="*">×</button>
+        <button type="button" class="key" data-insert="/">÷</button>
+        <button type="button" class="key" data-insert="pi">π</button>
+        <button type="button" class="key" data-insert="sqrt(">√</button>
+        <button type="button" class="key" data-insert="e^(">eˣ</button>
+        <button type="button" class="key" data-insert="sin(">sin</button>
+        <button type="button" class="key" data-insert="cos(">cos</button>
+        <button type="button" class="key" data-insert="ln(">ln</button>
+      </div>
+      <p class="hint">Leave the limits empty for an antiderivative. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
+      <div id="examples" class="examples">
+        <span class="examples-label">Try:</span>
+        <button type="button" class="chip" data-expr="x*exp(x)" disabled>x·eˣ</button>
+        <button type="button" class="chip" data-expr="x^2*sin(x)" disabled>x² sin x</button>
+        <button type="button" class="chip" data-expr="sin(x)" data-lower="0" data-upper="pi" disabled>sin x, 0 → π</button>
+        <button type="button" class="chip" data-expr="exp(-x^2)" data-lower="0" data-upper="1" disabled>e^(−x²), 0 → 1</button>
+        <button type="button" class="chip" data-expr="sin(x)/x" disabled>sin(x)/x</button>
+        <button type="button" class="chip" data-expr="x^x" data-lower="0" data-upper="1" disabled>xˣ, 0 → 1</button>
+      </div>
+      <button id="go" type="submit" disabled>Integrate</button>
+    </form>
+
+    <p id="status" class="status" role="status">Loading math engine…</p>
+    <p id="error" class="error" role="alert" hidden></p>
+
+    <section id="result" class="result" hidden>
+      <div class="result-bar">
+        <button id="copy" class="small" type="button">Copy LaTeX</button>
+      </div>
+      <div id="formula" class="formula"></div>
+      <p id="decimal" class="decimal"></p>
+      <ul id="notes" class="notes" hidden></ul>
+      <p id="check" class="check" hidden></p>
+      <div id="plot" class="plot" hidden>
+        <div class="plot-canvas">
+          <canvas id="canvas" aria-label="Graph of f(x)" role="img"></canvas>
+          <button id="reset" class="small reset" type="button">Reset</button>
+        </div>
+        <p class="plot-hint">Drag to move · scroll or pinch to zoom · double-click to reset</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
