@@ -8,7 +8,7 @@ const ready = (async () => {
   await pyodide.loadPackage("sympy");
   // steps.py first: integrate.py uses its functions. Two literal fetch() calls so deploy.sh
   // can tag each URL for cache-busting.
-  for (const response of [await fetch("steps.py?v=ca7aa57"), await fetch("integrate.py?v=ca7aa57")]) {
+  for (const response of [await fetch("steps.py?v=15278e2"), await fetch("integrate.py?v=15278e2")]) {
     if (!response.ok) throw new Error(`Couldn't fetch ${response.url} (${response.status})`);
     pyodide.runPython(await response.text());
   }
