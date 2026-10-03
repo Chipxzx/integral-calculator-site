@@ -269,15 +269,9 @@ function visibleData() {
   return visibleCurves().flatMap((i) => chart.data.datasets[i].data);
 }
 
-// The secant checkbox just shows/hides the dashed line and its ends (no re-fit needed).
-showSecant.addEventListener("change", () => {
-  if (!chart) return;
-  if (marker && !markerVisible()) marker = null;
-  chart.update("none");
-});
-
-// Ticking a box shows/hides that curve and re-fits y to what's now visible (x stays put).
-for (const box of [showF, showFPrime]) {
+// Ticking a box shows/hides that curve (or the secant) and re-fits y to what's now visible
+// (x stays put), so nothing you just turned on ends up off screen.
+for (const box of [showF, showFPrime, showSecant]) {
   box.addEventListener("change", () => {
     if (!chart) return;
     applyVisibility();
@@ -424,14 +418,16 @@ function applySamples({ id, curve, area, curve2 = [], points = [] }) {
 }
 
 // y-range for the visible points: 2nd-98th percentile (so a spike near an
-// asymptote can't squash the plot), always including y = 0, plus 10% padding.
+// asymptote can't squash the plot), always including y = 0 and the ends of a shown
+// secant (only 2 points, so the percentile would drop them), plus 10% padding.
 function fitY(curve, [xMin, xMax] = homeView.x) {
   const ys = curve.filter(([xv, yv]) => yv !== null && xv >= xMin && xv <= xMax).map(([, yv]) => yv);
-  if (!ys.length) return [-1, 1];
+  const ends = secant && showSecant.checked ? secant.filter(([xv]) => xv >= xMin && xv <= xMax) : [];
+  if (!ys.length && !ends.length) return [-1, 1];
   ys.sort((p, q) => p - q);
-  const pick = (fraction) => ys[Math.round(fraction * (ys.length - 1))];
-  const lo = Math.min(0, pick(0.02));
-  const hi = Math.max(0, pick(0.98));
+  const pick = (fraction) => (ys.length ? ys[Math.round(fraction * (ys.length - 1))] : 0);
+  const lo = Math.min(0, pick(0.02), ...ends.map(([, yv]) => yv));
+  const hi = Math.max(0, pick(0.98), ...ends.map(([, yv]) => yv));
   const pad = 0.1 * (hi - lo || 1);
   return [lo - pad, hi + pad];
 }

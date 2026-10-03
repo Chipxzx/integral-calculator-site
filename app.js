@@ -167,7 +167,7 @@ function showResult(data) {
 }
 
 function startWorker() {
-  worker = new Worker("worker.js?v=e5da208", { type: "module" });
+  worker = new Worker("worker.js?v=30a7a47", { type: "module" });
   setBusy(true, "Loading math engine…");
   // Fires if worker.js itself fails to load (e.g. the CDN is unreachable).
   worker.onerror = () => setBusy(true, "Couldn't load the math engine. Check your connection and reload the page.");
