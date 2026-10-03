@@ -7,6 +7,7 @@ const MAX_WIDTH = 1e6;
 const RESAMPLE_DELAY_MS = 80;
 
 const plotEl = document.getElementById("plot");
+const legendEl = document.getElementById("legend");
 const canvas = document.getElementById("canvas");
 
 let chart = null;
@@ -21,17 +22,20 @@ function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-// Neon glow on the curve (dataset 0). Chart.js has no built-in glow.
+// Datasets: 0 = f(x) curve, 1 = shaded area, 2 = f'(x) curve (derivative tab only).
+const AREA = 1;
+
+// Neon glow on the curves, in each curve's own color. Chart.js has no built-in glow.
 const glowPlugin = {
   id: "glow",
   beforeDatasetDraw(c, { index }) {
-    if (index !== 0) return;
+    if (index === AREA) return;
     c.ctx.save();
-    c.ctx.shadowColor = cssVar("--accent");
+    c.ctx.shadowColor = c.data.datasets[index].borderColor;
     c.ctx.shadowBlur = 10;
   },
   afterDatasetDraw(c, { index }) {
-    if (index === 0) c.ctx.restore();
+    if (index !== AREA) c.ctx.restore();
   },
 };
 
@@ -65,6 +69,7 @@ function showGraph(plot, requestSamples) {
       datasets: [
         { ...line, borderWidth: 2, borderColor: cssVar("--accent") },
         { ...line, borderWidth: 0, fill: "origin", backgroundColor: cssVar("--accent-fill") },
+        { ...line, borderWidth: 2, borderColor: cssVar("--accent-2") },
       ],
     },
     options: {
@@ -76,6 +81,7 @@ function showGraph(plot, requestSamples) {
     },
     plugins: [glowPlugin],
   });
+  legendEl.hidden = !plot.derivative;
   fitYOnNextSamples = true;
   resample();
 }
@@ -87,6 +93,7 @@ function clearGraph() {
   clearTimeout(resampleTimer);
   pointers.clear();
   plotEl.hidden = true;
+  legendEl.hidden = true;
 }
 
 function resample() {
@@ -101,13 +108,14 @@ function scheduleResample() {
   resampleTimer = setTimeout(resample, RESAMPLE_DELAY_MS);
 }
 
-function applySamples({ id, curve, area }) {
+function applySamples({ id, curve, area, curve2 = [] }) {
   if (!chart || id !== latestSampleId) return; // stale reply
   chart.data.datasets[0].data = curve;
-  chart.data.datasets[1].data = area;
+  chart.data.datasets[AREA].data = area;
+  chart.data.datasets[2].data = curve2;
   if (fitYOnNextSamples) {
     fitYOnNextSamples = false;
-    homeView.y = fitY(curve);
+    homeView.y = fitY(curve.concat(curve2)); // fit both f and f'
     chart.options.scales.y.min = homeView.y[0];
     chart.options.scales.y.max = homeView.y[1];
   }

@@ -6,24 +6,30 @@
   <title>Integral Calculator</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.css"
         integrity="sha384-3rdsX6e5mueWyoweR9NIVmtEsUkokpBT/0ALqKKIBMr9j4qhHkaIkAcGgsE6uVlp" crossorigin="anonymous">
-  <link rel="stylesheet" href="style.css?v=8ea9d69">
+  <link rel="stylesheet" href="style.css?v=ca7aa57">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.19.0/dist/katex.min.js"
           integrity="sha384-QFFtAGzvvj+bfgCGxXJlNZZR1nXEZgvG8tDLCCY1F19xl20WlfTYgguB4VcNdxYk" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"
           integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
-  <script defer src="graph.js?v=8ea9d69"></script>
-  <script defer src="app.js?v=8ea9d69"></script>
+  <script defer src="graph.js?v=ca7aa57"></script>
+  <script defer src="app.js?v=ca7aa57"></script>
 </head>
 <body>
   <main>
     <h1><span class="logo" aria-hidden="true">∫</span> Integral Calculator</h1>
+
+    <!-- Elements with data-only="integrate|differentiate" are shown only on that tab (app.js) -->
+    <div class="tabs" role="tablist" aria-label="Mode">
+      <button type="button" class="tab" role="tab" data-mode="integrate" aria-selected="true">∫ Integral</button>
+      <button type="button" class="tab" role="tab" data-mode="differentiate" aria-selected="false">d/dx Derivative</button>
+    </div>
 
     <form id="form" autocomplete="off">
       <label>f(x)
         <input id="expr" type="text" placeholder="x^2*sin(x)" maxlength="200"
                spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
       </label>
-      <div class="limits">
+      <div class="limits" data-only="integrate">
         <label>From
           <input id="lower" type="text" placeholder="0" maxlength="200"
                  spellcheck="false" autocapitalize="off" autocorrect="off" enterkeyhint="go">
@@ -48,15 +54,25 @@
         <button type="button" class="key" data-insert="cos(">cos</button>
         <button type="button" class="key" data-insert="ln(">ln</button>
       </div>
-      <p class="hint">Leave the limits empty for an antiderivative. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
+      <p class="hint" data-only="integrate">Leave the limits empty for an antiderivative. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
+      <p class="hint" data-only="differentiate" hidden>Differentiates with respect to x. 10x, 2(x+1) and x sin(x) multiply; ^ for powers.</p>
       <div id="examples" class="examples">
         <span class="examples-label">Try:</span>
-        <button type="button" class="chip" data-expr="x*exp(x)" disabled>x·eˣ</button>
-        <button type="button" class="chip" data-expr="x^2*sin(x)" disabled>x² sin x</button>
-        <button type="button" class="chip" data-expr="sin(x)" data-lower="0" data-upper="pi" disabled>sin x, 0 → π</button>
-        <button type="button" class="chip" data-expr="exp(-x^2)" data-lower="0" data-upper="1" disabled>e^(−x²), 0 → 1</button>
-        <button type="button" class="chip" data-expr="sin(x)/x" disabled>sin(x)/x</button>
-        <button type="button" class="chip" data-expr="x^x" data-lower="0" data-upper="1" disabled>xˣ, 0 → 1</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="x*exp(x)" disabled>x·eˣ</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="x^2*sin(x)" disabled>x² sin x</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="2x cos(x^2)" disabled>2x cos(x²)</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="sin(x)" data-lower="0" data-upper="pi" disabled>sin x, 0 → π</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="exp(-x^2)" data-lower="0" data-upper="1" disabled>e^(−x²), 0 → 1</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="sin(x)/x" disabled>sin(x)/x</button>
+        <button type="button" class="chip" data-only="integrate" data-expr="x^x" data-lower="0" data-upper="1" disabled>xˣ, 0 → 1</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="x^3+2x" hidden disabled>x³ + 2x</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="sin(x^2)" hidden disabled>sin(x²)</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="x^2 sin(x)" hidden disabled>x² sin x</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="sin(x)/x" hidden disabled>sin(x)/x</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="e^x cos(x)" hidden disabled>eˣ cos x</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="x^x" hidden disabled>xˣ</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="ln(cos(x))" hidden disabled>ln(cos x)</button>
+        <button type="button" class="chip" data-only="differentiate" data-expr="sqrt(1+x^2)" hidden disabled>√(1 + x²)</button>
       </div>
       <button id="go" type="submit" disabled>Integrate</button>
     </form>
@@ -72,11 +88,20 @@
       <p id="decimal" class="decimal"></p>
       <ul id="notes" class="notes" hidden></ul>
       <p id="check" class="check" hidden></p>
+      <!-- Native <details>: folds and unfolds without JavaScript -->
+      <details id="steps" class="steps" open hidden>
+        <summary>Steps</summary>
+        <ol id="steps-list"></ol>
+      </details>
       <div id="plot" class="plot" hidden>
         <div class="plot-canvas">
           <canvas id="canvas" aria-label="Graph of f(x)" role="img"></canvas>
           <button id="reset" class="small reset" type="button">Reset</button>
         </div>
+        <p id="legend" class="legend" hidden>
+          <span class="legend-f">f(x)</span>
+          <span class="legend-df">f′(x)</span>
+        </p>
         <p class="plot-hint">Drag to move · scroll or pinch to zoom · double-click to reset</p>
       </div>
     </section>

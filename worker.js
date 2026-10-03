@@ -6,9 +6,12 @@ import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyod
 const ready = (async () => {
   const pyodide = await loadPyodide();
   await pyodide.loadPackage("sympy");
-  const response = await fetch("integrate.py?v=8ea9d69");
-  if (!response.ok) throw new Error(`Couldn't fetch integrate.py (${response.status})`);
-  pyodide.runPython(await response.text());
+  // steps.py first: integrate.py uses its functions. Two literal fetch() calls so deploy.sh
+  // can tag each URL for cache-busting.
+  for (const response of [await fetch("steps.py?v=ca7aa57"), await fetch("integrate.py?v=ca7aa57")]) {
+    if (!response.ok) throw new Error(`Couldn't fetch ${response.url} (${response.status})`);
+    pyodide.runPython(await response.text());
+  }
   return { run: pyodide.globals.get("run"), sampleView: pyodide.globals.get("sample_view") };
 })();
 
@@ -32,10 +35,10 @@ onmessage = async ({ data }) => {
   }
   let result;
   try {
-    result = JSON.parse(run(data.expr, data.lower, data.upper));
+    result = JSON.parse(run(data.expr, data.lower, data.upper, data.mode, data.steps));
   } catch (err) {
     console.error(err);
-    result = { ok: false, error: "Something went wrong while integrating that." };
+    result = { ok: false, error: "Something went wrong while working that out." };
   }
   postMessage({ type: "result", id: data.id, ...result });
 };

@@ -10,6 +10,11 @@ const WORDS = new Set([
   "exp", "log", "ln", "sqrt", "abs",
 ]);
 const TIMEOUT_MS = 10000;
+const MAX_STEP_INDENT = 5; // deeper sub-steps stop indenting, so phones don't run out of width
+const MODE_TEXT = {
+  integrate: { button: "Integrate", busy: "Integrating…" },
+  differentiate: { button: "Differentiate", busy: "Differentiating…" },
+};
 
 const $ = (id) => document.getElementById(id);
 const form = $("form");
@@ -25,6 +30,10 @@ const decimalEl = $("decimal");
 const notesEl = $("notes");
 const checkEl = $("check");
 const copyButton = $("copy");
+const stepsEl = $("steps");
+const stepsList = $("steps-list");
+const tabs = document.querySelectorAll(".tab");
+const modeOnly = document.querySelectorAll("[data-only]"); // shown only on one tab
 const chips = document.querySelectorAll(".chip");
 const keys = document.querySelectorAll(".key");
 const touchScreen = matchMedia("(hover: none) and (pointer: coarse)"); // same rule that shows the keypad
@@ -36,6 +45,8 @@ let timer;
 let renderedLatex = ""; // what Copy LaTeX copies
 let copyTimer;
 let lastInput = exprInput; // where keypad keys type
+let mode = "integrate"; // or "differentiate"
+let lastRequest = null; // resent without steps if it times out
 
 // Returns true if text passes the allowlist (same rules as integrate.py).
 function isAllowed(text, allowX) {
@@ -46,7 +57,7 @@ function isAllowed(text, allowX) {
 
 function validate(expr, lower, upper) {
   if (!isAllowed(expr, true)) return "Couldn't read that expression.";
-  if (!lower && !upper) return null;
+  if (mode === "differentiate" || (!lower && !upper)) return null;
   if (!lower || !upper) return "Fill in both limits.";
   if (!isAllowed(lower, false) || !isAllowed(upper, false)) return "Couldn't read the limits.";
   return null;
@@ -66,7 +77,26 @@ function showError(message) {
 function clearOutput() {
   errorEl.hidden = true;
   resultEl.hidden = true;
+  stepsEl.hidden = true;
   clearGraph();
+}
+
+// Steps come from steps.py: `text` is our own fixed sentence (shown as text only),
+// `latex` is SymPy's output (rendered by KaTeX), `depth` indents sub-steps.
+function renderSteps(steps) {
+  const items = (steps || []).map((step) => {
+    const li = document.createElement("li");
+    li.style.marginLeft = `${Math.min(step.depth, MAX_STEP_INDENT) * 14}px`;
+    li.append(Object.assign(document.createElement("p"), { className: "step-text", textContent: step.text }));
+    if (step.latex) {
+      const math = Object.assign(document.createElement("div"), { className: "step-math" });
+      katex.render(step.latex, math, { displayMode: true, throwOnError: false });
+      li.append(math);
+    }
+    return li;
+  });
+  stepsList.replaceChildren(...items);
+  stepsEl.hidden = !items.length; // keeps its open/folded state between results
 }
 
 // 2 -> "2.0", 5.869604401089358 -> "5.869604401"
@@ -105,6 +135,7 @@ function showResult(data) {
     checkEl.dataset.status = data.check.status;
   }
 
+  renderSteps(data.steps);
   copyButton.textContent = "Copy LaTeX";
   resultEl.hidden = false;
   if (data.plot) showGraph(data.plot, requestSamples);
@@ -117,13 +148,13 @@ function showResult(data) {
 }
 
 function startWorker() {
-  worker = new Worker("worker.js?v=8ea9d69", { type: "module" });
+  worker = new Worker("worker.js?v=ca7aa57", { type: "module" });
   setBusy(true, "Loading math engine…");
   // Fires if worker.js itself fails to load (e.g. the CDN is unreachable).
   worker.onerror = () => setBusy(true, "Couldn't load the math engine. Check your connection and reload the page.");
   worker.onmessage = ({ data }) => {
     if (data.type === "ready") {
-      setBusy(false, "");
+      if (pendingId === null) setBusy(false, ""); // else a retry is already queued: stay busy
     } else if (data.type === "failed") {
       console.error(data.error);
       setBusy(true, "Couldn't load the math engine. Check your connection and reload the page.");
@@ -131,6 +162,9 @@ function startWorker() {
       clearTimeout(timer);
       pendingId = null;
       setBusy(false, "");
+      if (data.ok && lastRequest.retried) {
+        data.notes = [...(data.notes || []), "Working out the steps took too long, so they're left out this time."];
+      }
       showResult(data);
     } else if (data.type === "samples") {
       applySamples(data);
@@ -144,21 +178,46 @@ form.addEventListener("submit", (event) => {
   clearOutput();
 
   const expr = exprInput.value.trim();
-  const lower = lowerInput.value.trim();
-  const upper = upperInput.value.trim();
+  const integral = mode === "integrate";
+  const lower = integral ? lowerInput.value.trim() : "";
+  const upper = integral ? upperInput.value.trim() : "";
   const problem = validate(expr, lower, upper);
   if (problem) return showError(problem);
 
-  pendingId = ++nextId;
-  worker.postMessage({ type: "integrate", id: pendingId, expr, lower, upper });
-  setBusy(true, "Integrating…");
-  timer = setTimeout(() => {
-    worker.terminate();
-    pendingId = null;
-    showError("That took too long, so I stopped it.");
-    startWorker();
-  }, TIMEOUT_MS);
+  send({ mode, expr, lower, upper, steps: true }, MODE_TEXT[mode].busy);
 });
+
+function send(request, message) {
+  pendingId = ++nextId;
+  lastRequest = request;
+  worker.postMessage({ type: "solve", id: pendingId, ...request });
+  setBusy(true, message);
+  timer = setTimeout(onTimeout, TIMEOUT_MS);
+}
+
+function onTimeout() {
+  worker.terminate();
+  pendingId = null;
+  startWorker();
+  if (lastRequest.steps) {
+    // The steps may have been the slow part: ask once more for just the answer.
+    send({ ...lastRequest, steps: false, retried: true }, "Taking a while; trying again without the steps…");
+  } else {
+    showError("That took too long, so I stopped it.");
+  }
+}
+
+// Tabs: switch between integrals and derivatives. The f(x) text is kept.
+function setMode(newMode) {
+  if (newMode === mode || pendingId !== null) return;
+  mode = newMode;
+  for (const tab of tabs) tab.setAttribute("aria-selected", String(tab.dataset.mode === mode));
+  for (const el of modeOnly) el.hidden = el.dataset.only !== mode;
+  button.textContent = MODE_TEXT[mode].button;
+  clearOutput();
+}
+
+for (const tab of tabs) tab.addEventListener("click", () => setMode(tab.dataset.mode));
 
 // Example chips fill the form and submit it, so they go through the same validation as typing.
 for (const chip of chips) {
@@ -178,7 +237,8 @@ for (const input of [exprInput, lowerInput, upperInput]) {
 
 function insertKey(key) {
   const inputs = [exprInput, lowerInput, upperInput];
-  const input = inputs.includes(document.activeElement) ? document.activeElement : lastInput;
+  let input = inputs.includes(document.activeElement) ? document.activeElement : lastInput;
+  if (input.closest("[hidden]")) input = exprInput; // From/To are hidden on the derivative tab
   input.setRangeText(key.dataset.insert, input.selectionStart, input.selectionEnd, "end");
   input.focus();
 }

@@ -1,6 +1,9 @@
-"""Runs inside Pyodide (loaded by worker.js). Safely parses the user's input and integrates it.
+"""Runs inside Pyodide (loaded by worker.js after steps.py). Safely parses the user's input and
+integrates or differentiates it.
 
-worker.js calls run(expr, lower, upper) and sample_view(lo, hi); both return JSON strings.
+worker.js calls run(expr, lower, upper, mode, want_steps) and sample_view(lo, hi); both return
+JSON strings. integral_steps_for(), derivative_steps(), add(), NoSteps, tex() and integrand_tex() come
+from steps.py; tex() writes ln and arcsin/arctan the way a math class does.
 """
 import json
 import math
@@ -8,7 +11,7 @@ import re
 
 from sympy import (
     Abs, E, Expr, Float, Function, Integer, Integral, Rational, Symbol, acos, asin, atan, cos,
-    cosh, diff, exp, integrate, latex, lambdify, log, nan, oo, pi, sin, sinh, sqrt, tan, tanh, zoo,
+    cosh, diff, exp, integrate, lambdify, log, nan, oo, pi, sin, sinh, sqrt, tan, tanh, zoo,
 )
 from sympy.parsing.sympy_parser import (
     convert_xor, implicit_multiplication, parse_expr, standard_transformations,
@@ -18,6 +21,7 @@ from sympy.parsing.sympy_parser import (
 MAX_LEN = 200
 CHARS = re.compile(r"^[0-9a-z+\-*/^(). ]+$")
 x = Symbol("x")
+x_real = Symbol("x", real=True)  # derivatives: so |x|' is sign(x), not a complex-number formula
 NAMES = {
     "x": x, "e": E, "pi": pi,
     "sin": sin, "cos": cos, "tan": tan, "asin": asin, "acos": acos, "atan": atan,
@@ -33,8 +37,13 @@ CURVE_POINTS = 900  # graph.js asks for 3x the visible width, so ~300 points on 
 AREA_POINTS = 300
 MAX_VIEW_WIDTH = 1e7
 
-# The last integrated function, so the graph can ask for fresh points as you pan and zoom.
-VIEW = {"fn": None, "a": None, "b": None}
+# The last function (and its derivative, in derivative mode), so the graph can ask for fresh
+# points as you pan and zoom.
+VIEW = {"fn": None, "fn2": None, "a": None, "b": None}
+# lambdify's "math" module has no sign(), which |x|' needs.
+LAMBDIFY_MODULES = [{"sign": lambda v: (v > 0) - (v < 0)}, "math"]
+
+NO_STEPS_NOTE = "No step-by-step method for this one; the answer above was found with SymPy's advanced algorithms."
 
 # Special (non-elementary) functions SymPy may use in an answer, in plain words.
 SPECIAL = {
@@ -59,7 +68,7 @@ class UserError(Exception):
     """A problem to show the user as-is."""
 
 
-def parse(text, allow_x, error):
+def parse(text, allow_x, error, variable=x):
     text = text.strip()
     if not text or len(text) > MAX_LEN or not CHARS.match(text):
         raise UserError(error)
@@ -67,7 +76,7 @@ def parse(text, allow_x, error):
         if word not in NAMES or (word == "x" and not allow_x):
             raise UserError(error)
     try:
-        expr = parse_expr(text, local_dict=dict(NAMES), global_dict=dict(GLOBALS), transformations=TRANSFORMS)
+        expr = parse_expr(text, local_dict=dict(NAMES, x=variable), global_dict=dict(GLOBALS), transformations=TRANSFORMS)
     except Exception:
         raise UserError(error)
     if not isinstance(expr, Expr):  # e.g. "sin" on its own
@@ -97,14 +106,15 @@ def sample(fn, lo, hi, count):
     return points
 
 
-def remember(f, a, b):
-    """Store f for sample_view(). Returns the plot info for the page, or None if f can't be plotted."""
+def remember(f, a, b, variable=x, derivative=None):
+    """Store f (and f') for sample_view(). Returns the plot info for the page, or None if f can't be plotted."""
     try:
-        fn = lambdify(x, f, "math")
+        fn = lambdify(variable, f, LAMBDIFY_MODULES)
+        fn2 = None if derivative is None else lambdify(variable, derivative, LAMBDIFY_MODULES)
     except Exception:
         return None
-    VIEW.update(fn=fn, a=a, b=b)
-    return {"a": a, "b": b}
+    VIEW.update(fn=fn, fn2=fn2, a=a, b=b)
+    return {"a": a, "b": b, "derivative": derivative is not None}
 
 
 def special_notes(answer):
@@ -117,23 +127,31 @@ def close(got, want, tolerance):
     return abs(got - want) <= tolerance * max(1, abs(want))
 
 
-def check_antiderivative(f, antiderivative):
-    """Differentiate the answer and compare it with f at TEST_POINTS (numbers, not simplify(): fast)."""
-    derivative = diff(antiderivative, x)
+def agree(got, want, variable=x):
+    """Compare two expressions at TEST_POINTS (numbers, not simplify(): fast).
+    True if equal wherever both are defined, False if not, None if too few usable points."""
     usable = 0
     for v in TEST_POINTS:
         try:
-            want = complex(f.subs(x, v).evalf())
-            got = complex(derivative.subs(x, v).evalf())
+            w = complex(want.subs(variable, v).evalf())
+            g = complex(got.subs(variable, v).evalf())
         except Exception:  # undefined at this point
             continue
-        if not all(map(math.isfinite, (want.real, want.imag, got.real, got.imag))):
+        if not all(map(math.isfinite, (w.real, w.imag, g.real, g.imag))):
             continue
-        if not close(got, want, 1e-8):
-            return {"status": "failed", "text": "✗ Check failed: differentiating the answer doesn't give back f(x)."}
+        if not close(g, w, 1e-8):
+            return False
         usable += 1
-    if usable < MIN_USABLE_POINTS:
+    return None if usable < MIN_USABLE_POINTS else True
+
+
+def check_antiderivative(f, antiderivative):
+    """Differentiate the answer and compare it with f."""
+    same = agree(diff(antiderivative, x), f)
+    if same is None:
         return CHECK_UNKNOWN
+    if not same:
+        return {"status": "failed", "text": "✗ Check failed: differentiating the answer doesn't give back f(x)."}
     return {"status": "ok", "text": "✓ Checked: d/dx of the answer gives back f(x)."}
 
 
@@ -150,19 +168,83 @@ def check_definite(f, a, b, value):
     return {"status": "ok", "text": "✓ Checked: matches numerical integration."}
 
 
-def solve(expr_text, lower_text, upper_text):
-    VIEW.update(fn=None, a=None, b=None)
+def add_integral_steps(result, f, answer, limits=None):
+    """Attach steps to result, or a note if there's no step-by-step method.
+    limits = (a, b, exact) for a definite integral."""
+    try:
+        antiderivative, steps = integral_steps_for(f, x)
+        if agree(diff(antiderivative, x), f) is not True:  # never show steps we can't verify
+            raise NoSteps
+        if limits is None:
+            add(steps, 0, "Add the constant of integration.",
+                rf"\int {integrand_tex(f)}\, dx = {tex(antiderivative)} + C")
+            if tex(antiderivative) != tex(answer):
+                add(steps, 0, "This is the same as the answer above, just written differently "
+                              "(antiderivatives can also differ by a constant).")
+        else:
+            a, b, exact = limits
+            Fb, Fa = antiderivative.subs(x, b), antiderivative.subs(x, a)
+            try:
+                fits = close(complex((Fb - Fa).evalf()), complex(exact.evalf()), 1e-9)
+            except Exception:  # F undefined at a limit
+                fits = False
+            if fits:
+                add(steps, 0, "Evaluate between the limits: F(b) − F(a).",
+                    rf"\Big[{tex(antiderivative)}\Big]_{{{tex(a)}}}^{{{tex(b)}}} = "
+                    rf"{tex(Fb)} - \left({tex(Fa)}\right) = {tex(exact)}")
+            else:
+                add(steps, 0, "Apply the limits to get the answer above "
+                              "(here SymPy needed a limit at an endpoint, so F(b) − F(a) alone isn't enough).")
+    except NoSteps:
+        result["notes"].append(NO_STEPS_NOTE)
+        return
+    result["steps"] = steps
+
+
+def solve_derivative(expr_text, want_steps):
+    f = parse(expr_text, allow_x=True, error="Couldn't read that expression.", variable=x_real)
+    answer = diff(f, x_real)
+    result = {
+        "inputLatex": rf"\frac{{d}}{{dx}}\left[{tex(f)}\right]",
+        "resultLatex": tex(answer),
+        "notes": special_notes(answer),
+        "plot": remember(f, None, None, variable=x_real, derivative=answer),
+    }
+    if not want_steps:
+        return result
+    try:
+        ours, steps = derivative_steps(f, x_real)
+        same = agree(ours, answer, x_real)
+        if same is False:  # a bug in our step engine: don't show wrong steps
+            raise NoSteps
+        if tex(ours) != tex(answer):
+            add(steps, 0, "Simplify.", rf"\frac{{d}}{{dx}}\left[{tex(f)}\right] = {tex(answer)}")
+    except NoSteps:
+        result["notes"].append("Couldn't break this one into steps; the answer above is from SymPy.")
+        return result
+    result["steps"] = steps
+    result["check"] = CHECK_UNKNOWN if same is None else {
+        "status": "ok", "text": "✓ Checked: the steps agree with SymPy's derivative."}
+    return result
+
+
+def solve(expr_text, lower_text, upper_text, mode, want_steps):
+    VIEW.update(fn=None, fn2=None, a=None, b=None)
+    if mode == "differentiate":
+        return solve_derivative(expr_text, want_steps)
     f = parse(expr_text, allow_x=True, error="Couldn't read that expression.")
 
     if not lower_text.strip() and not upper_text.strip():
         antiderivative = integrate(f, x)
-        result = {"inputLatex": latex(Integral(f, x)), "plot": remember(f, None, None)}
+        result = {"inputLatex": tex(Integral(f, x)), "plot": remember(f, None, None)}
         if antiderivative.has(Integral):  # SymPy gave up: no elementary antiderivative
             result["notes"] = ["No elementary antiderivative: this can't be written with standard functions."]
             return result
-        result["resultLatex"] = latex(antiderivative) + " + C"
+        result["resultLatex"] = tex(antiderivative) + " + C"
         result["notes"] = special_notes(antiderivative)
         result["check"] = check_antiderivative(f, antiderivative)
+        if want_steps:
+            add_integral_steps(result, f, antiderivative)
         return result
 
     if not lower_text.strip() or not upper_text.strip():
@@ -181,36 +263,40 @@ def solve(expr_text, lower_text, upper_text):
 
     lo, hi = sorted((float(a), float(b)))
     result = {
-        "inputLatex": latex(Integral(f, (x, a, b))),
+        "inputLatex": tex(Integral(f, (x, a, b))),
         "decimal": value.real,
         "plot": remember(f, lo, hi),
     }
     if not closed_form:  # show the numerical value only
         result["notes"] = ["No closed form, so this is a numerical value."]
         return result
-    result["resultLatex"] = latex(exact)
+    result["resultLatex"] = tex(exact)
     result["notes"] = special_notes(exact)
     result["check"] = check_definite(f, a, b, value)
+    if want_steps:
+        add_integral_steps(result, f, exact, limits=(a, b, exact))
     return result
 
 
 def sample_view(lo, hi):
-    """Points for the graph between lo and hi: the curve, plus the shaded part of [a, b] in view."""
+    """Points for the graph between lo and hi: the curve, the shaded part of [a, b] in view,
+    and f' (curve2) in derivative mode."""
     lo, hi = float(lo), float(hi)
-    fn, a, b = VIEW["fn"], VIEW["a"], VIEW["b"]
+    fn, fn2, a, b = VIEW["fn"], VIEW["fn2"], VIEW["a"], VIEW["b"]
     if fn is None or not (math.isfinite(lo) and math.isfinite(hi) and 0 < hi - lo <= MAX_VIEW_WIDTH):
-        return json.dumps({"curve": [], "area": []})
+        return json.dumps({"curve": [], "area": [], "curve2": []})
     area = []
     if a is not None and max(lo, a) < min(hi, b):
         area = sample(fn, max(lo, a), min(hi, b), AREA_POINTS)
-    return json.dumps({"curve": sample(fn, lo, hi, CURVE_POINTS), "area": area})
+    curve2 = [] if fn2 is None else sample(fn2, lo, hi, CURVE_POINTS)
+    return json.dumps({"curve": sample(fn, lo, hi, CURVE_POINTS), "area": area, "curve2": curve2})
 
 
-def run(expr_text, lower_text, upper_text):
+def run(expr_text, lower_text, upper_text, mode="integrate", want_steps=True):
     try:
-        result = {"ok": True, **solve(expr_text, lower_text, upper_text)}
+        result = {"ok": True, **solve(expr_text, lower_text, upper_text, mode, want_steps)}
     except UserError as err:
         result = {"ok": False, "error": str(err)}
     except Exception:
-        result = {"ok": False, "error": "Something went wrong while integrating that."}
+        result = {"ok": False, "error": "Something went wrong while working that out."}
     return json.dumps(result)
