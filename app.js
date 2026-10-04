@@ -56,11 +56,47 @@ function isAllowed(text, allowX) {
   return words.every((w) => WORDS.has(w) && (allowX || w !== "x"));
 }
 
+// Lookalikes of allowed characters that some keyboards type instead. Most important: on many
+// Mac layouts ^ is a "dead key" and types ˆ (U+02C6), not ^. Each maps to plain ASCII, and the
+// result still has to pass the allowlist above, so this can't let anything new through.
+const LOOKALIKES = [
+  [/[ˆ‸⌃]/g, "^"], // ˆ ‸ ⌃
+  [/[−–—﹣]/g, "-"], // − – — ﹣
+  [/[×⋅·∙∗]/g, "*"], // × ⋅ · ∙ ∗
+  [/[÷∕]/g, "/"], // ÷ ∕
+  [/π/g, "pi"], // π
+  [/[   ]/g, " "], // non-breaking and thin spaces
+  [/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)], // fullwidth ＾ （ ） ｘ ２ …
+];
+const SUPERSCRIPT_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+
+function normalizeInput(text) {
+  let plain = text;
+  for (const [pattern, replacement] of LOOKALIKES) plain = plain.replace(pattern, replacement);
+  // x² -> x^2, x¹⁰ -> x^(10)
+  return plain.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g, (run) => {
+    const digits = [...run].map((c) => SUPERSCRIPT_DIGITS.indexOf(c)).join("");
+    return digits.length > 1 ? `^(${digits})` : `^${digits}`;
+  });
+}
+
+// Why text failed the allowlist, to add to the error: the first unknown character or word.
+// (Shown with textContent, like everything else the user typed.)
+function whyNotAllowed(text, allowX) {
+  if (text.length > MAX_LEN) return ` (it's longer than ${MAX_LEN} characters)`;
+  const char = [...text].find((c) => !CHARS.test(c));
+  if (char) return ` ("${char}" isn't a character I can read)`;
+  const word = (text.match(/[a-z]+/g) || []).find((w) => !WORDS.has(w) || (!allowX && w === "x"));
+  return word ? ` ("${word}" isn't something I know here)` : "";
+}
+
 function validate(expr, lower, upper) {
-  if (!isAllowed(expr, true)) return "Couldn't read that expression.";
+  if (!isAllowed(expr, true)) return `Couldn't read that expression${whyNotAllowed(expr, true)}.`;
   if (!lower && !upper) return null;
   if (!lower || !upper) return "Fill in both limits.";
-  if (!isAllowed(lower, false) || !isAllowed(upper, false)) return "Couldn't read the limits.";
+  for (const limit of [lower, upper]) {
+    if (!isAllowed(limit, false)) return `Couldn't read the limits${whyNotAllowed(limit, false)}.`;
+  }
   return null;
 }
 
@@ -167,7 +203,7 @@ function showResult(data) {
 }
 
 function startWorker() {
-  worker = new Worker("worker.js?v=30a7a47", { type: "module" });
+  worker = new Worker("worker.js?v=9584cb5", { type: "module" });
   setBusy(true, "Loading math engine…");
   // Fires if worker.js itself fails to load (e.g. the CDN is unreachable).
   worker.onerror = () => setBusy(true, "Couldn't load the math engine. Check your connection and reload the page.");
@@ -198,6 +234,11 @@ form.addEventListener("submit", (event) => {
   if (pendingId !== null || button.disabled) return; // busy, or the engine isn't loaded yet
   clearOutput();
 
+  // Swap keyboard lookalikes (e.g. a Mac's ˆ) for plain characters, and show what will be read.
+  for (const input of [exprInput, lowerInput, upperInput]) {
+    const plain = normalizeInput(input.value);
+    if (plain !== input.value) input.value = plain;
+  }
   const expr = exprInput.value.trim();
   const lower = lowerInput.value.trim(); // definite integral, or average rate of change
   const upper = upperInput.value.trim();
